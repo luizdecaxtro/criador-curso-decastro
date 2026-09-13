@@ -247,6 +247,124 @@ async function loadCourse(env, request, courseId) {
   };
 }
 
+/* ================= Área do Aluno ================= */
+
+async function enrollStudent(env, request, courseId) {
+  const studentId = await getCreatorId(env, request);
+  if (!studentId) throw new Error('É preciso ter uma conta e estar logado para se inscrever');
+  const course = await env.DB.prepare('SELECT id FROM courses WHERE id = ?').bind(courseId).first();
+  if (!course) throw new Error('Curso não encontrado');
+  let enrollment = await env.DB.prepare('SELECT * FROM enrollments WHERE student_id = ? AND course_id = ?').bind(studentId, courseId).first();
+  if (!enrollment) {
+    const id = crypto.randomUUID();
+    await env.DB.prepare('INSERT INTO enrollments (id, student_id, course_id) VALUES (?,?,?)').bind(id, studentId, courseId).run();
+    enrollment = await env.DB.prepare('SELECT * FROM enrollments WHERE id = ?').bind(id).first();
+  }
+  return { ...enrollment, completed_lessons: JSON.parse(enrollment.completed_lessons || '[]') };
+}
+
+async function getCourseForStudent(env, request, courseId) {
+  const studentId = await getCreatorId(env, request);
+  if (!studentId) throw new Error('É preciso estar logado');
+  const enrollment = await env.DB.prepare('SELECT * FROM enrollments WHERE student_id = ? AND course_id = ?').bind(studentId, courseId).first();
+  if (!enrollment) throw new Error('Você ainda não está inscrito neste curso');
+  const courseData = await loadCourse(env, request, courseId);
+  return { ...courseData, enrollment: { ...enrollment, completed_lessons: JSON.parse(enrollment.completed_lessons || '[]') } };
+}
+
+async function completeLesson(env, request, { courseId, lessonId }) {
+  const studentId = await getCreatorId(env, request);
+  if (!studentId) throw new Error('É preciso estar logado');
+  const enrollment = await env.DB.prepare('SELECT * FROM enrollments WHERE student_id = ? AND course_id = ?').bind(studentId, courseId).first();
+  if (!enrollment) throw new Error('Inscrição não encontrada');
+  const completed = JSON.parse(enrollment.completed_lessons || '[]');
+  if (!completed.includes(lessonId)) completed.push(lessonId);
+  await env.DB.prepare('UPDATE enrollments SET completed_lessons = ? WHERE id = ?').bind(JSON.stringify(completed), enrollment.id).run();
+  return { completed_lessons: completed };
+}
+
+async function getAssessment(env, request, courseId) {
+  const studentId = await getCreatorId(env, request);
+  if (!studentId) throw new Error('É preciso estar logado');
+  const enrollment = await env.DB.prepare('SELECT * FROM enrollments WHERE student_id = ? AND course_id = ?').bind(studentId, courseId).first();
+  if (!enrollment) throw new Error('Você ainda não está inscrito neste curso');
+
+  const course = await env.DB.prepare('SELECT * FROM courses WHERE id = ?').bind(courseId).first();
+  if (!course) throw new Error('Curso não encontrado');
+  if (course.assessment_questions) {
+    return stripAnswers(JSON.parse(course.assessment_questions));
+  }
+
+  const modules = await env.DB.prepare('SELECT * FROM modules WHERE course_id = ?').bind(courseId).all();
+  let allLessonsText = '';
+  for (const m of modules.results) {
+    const lessons = await env.DB.prepare('SELECT title, content FROM lessons WHERE module_id = ?').bind(m.id).all();
+    lessons.results.forEach(l => { allLessonsText += `\n### ${l.title}\n${l.content}\n`; });
+  }
+  const fa = course.final_assessment ? JSON.parse(course.final_assessment) : {};
+  const questionCount = parseInt(fa.questionCount) || 10;
+
+  const system = `Você cria avaliações de múltipla escolha para cursos.
+Com base no conteúdo do curso abaixo, gere ${questionCount} perguntas de múltipla escolha (4 alternativas cada, exatamente 1 correta).
+As perguntas devem cobrir o conteúdo real das aulas, não perguntas genéricas.
+Responda APENAS com JSON, sem markdown, no formato exato:
+{"questions":[{"question":"...","options":["...","...","...","..."],"correctIndex":0}]}`;
+  const userMessage = `Curso: ${course.title}\n\nConteúdo das aulas:\n${allLessonsText.slice(0, 12000)}`;
+
+  const result = await callAnthropic(env, { model: MODEL_FULL, system, userMessage, maxTokens: 3000 });
+  await env.DB.prepare('UPDATE courses SET assessment_questions = ? WHERE id = ?').bind(JSON.stringify(result), courseId).run();
+  return stripAnswers(result);
+}
+
+function stripAnswers(questionsObj) {
+  // nunca manda o gabarito para o navegador do aluno
+  return { questions: questionsObj.questions.map(q => ({ question: q.question, options: q.options })) };
+}
+
+async function submitAssessment(env, request, { courseId, answers }) {
+  const studentId = await getCreatorId(env, request);
+  if (!studentId) throw new Error('É preciso estar logado');
+  const course = await env.DB.prepare('SELECT * FROM courses WHERE id = ?').bind(courseId).first();
+  if (!course || !course.assessment_questions) throw new Error('Avaliação ainda não foi gerada');
+  const questions = JSON.parse(course.assessment_questions).questions;
+
+  let correct = 0;
+  questions.forEach((q, i) => { if (answers[i] === q.correctIndex) correct++; });
+  const score = Math.round((correct / questions.length) * 100);
+  const fa = course.final_assessment ? JSON.parse(course.final_assessment) : {};
+  const passScore = parseInt(fa.passScore) || 70;
+  const passed = score >= passScore;
+
+  const enrollment = await env.DB.prepare('SELECT * FROM enrollments WHERE student_id = ? AND course_id = ?').bind(studentId, courseId).first();
+  if (!enrollment) throw new Error('Inscrição não encontrada');
+  await env.DB.prepare('UPDATE enrollments SET final_score = ?, passed = ? WHERE id = ?').bind(score, passed ? 1 : 0, enrollment.id).run();
+
+  return { score, passed, correct, total: questions.length };
+}
+
+async function issueCertificate(env, request, courseId) {
+  const studentId = await getCreatorId(env, request);
+  if (!studentId) throw new Error('É preciso estar logado');
+  const enrollment = await env.DB.prepare('SELECT * FROM enrollments WHERE student_id = ? AND course_id = ?').bind(studentId, courseId).first();
+  if (!enrollment || !enrollment.passed) throw new Error('Você ainda não foi aprovado na avaliação final');
+
+  const student = await env.DB.prepare('SELECT name FROM creators WHERE id = ?').bind(studentId).first();
+  const course = await env.DB.prepare('SELECT * FROM courses WHERE id = ?').bind(courseId).first();
+  const cert = course.certificate ? JSON.parse(course.certificate) : {};
+
+  if (!enrollment.certificate_issued_at) {
+    await env.DB.prepare('UPDATE enrollments SET certificate_issued_at = CURRENT_TIMESTAMP WHERE id = ?').bind(enrollment.id).run();
+  }
+
+  const template = cert.text || 'Certificamos que [nome] concluiu o curso [curso] com carga horária de [horas] horas.';
+  const text = template.replace('[nome]', student.name).replace('[curso]', course.title).replace('[horas]', course.hours);
+
+  return {
+    title: cert.title || 'Certificado de Conclusão',
+    text, studentName: student.name, courseTitle: course.title, hours: course.hours
+  };
+}
+
 /* ================= roteamento ================= */
 
 export default {
@@ -308,6 +426,45 @@ export default {
         const courseId = url.searchParams.get('id');
         if (!courseId) throw new Error('Parâmetro id é obrigatório');
         const result = await loadCourse(env, request, courseId);
+        return jsonResponse(result, 200, headersOut, cors);
+      }
+
+      if (request.method === 'POST' && url.pathname === '/api/enroll') {
+        const body = await request.json();
+        const result = await enrollStudent(env, request, body.courseId);
+        return jsonResponse(result, 200, headersOut, cors);
+      }
+
+      if (request.method === 'GET' && url.pathname === '/api/course-for-student') {
+        const courseId = url.searchParams.get('courseId');
+        if (!courseId) throw new Error('Parâmetro courseId é obrigatório');
+        const result = await getCourseForStudent(env, request, courseId);
+        return jsonResponse(result, 200, headersOut, cors);
+      }
+
+      if (request.method === 'POST' && url.pathname === '/api/complete-lesson') {
+        const body = await request.json();
+        const result = await completeLesson(env, request, body);
+        return jsonResponse(result, 200, headersOut, cors);
+      }
+
+      if (request.method === 'GET' && url.pathname === '/api/get-assessment') {
+        const courseId = url.searchParams.get('courseId');
+        if (!courseId) throw new Error('Parâmetro courseId é obrigatório');
+        const result = await getAssessment(env, request, courseId);
+        return jsonResponse(result, 200, headersOut, cors);
+      }
+
+      if (request.method === 'POST' && url.pathname === '/api/submit-assessment') {
+        const body = await request.json();
+        const result = await submitAssessment(env, request, body);
+        return jsonResponse(result, 200, headersOut, cors);
+      }
+
+      if (request.method === 'GET' && url.pathname === '/api/certificate') {
+        const courseId = url.searchParams.get('courseId');
+        if (!courseId) throw new Error('Parâmetro courseId é obrigatório');
+        const result = await issueCertificate(env, request, courseId);
         return jsonResponse(result, 200, headersOut, cors);
       }
 
