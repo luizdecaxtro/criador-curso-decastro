@@ -1,3 +1,7 @@
 name = "criador-curso-decastro"
 main = "worker-criador-curso.js"
 compatibility_date = "2026-09-01"
+[[d1_databases]]
+binding = "DB"
+database_name = "criador-curso-db"
+database_id = "cda86c6a-09d0-4d9c-b4b4-03e1f59925d6"
