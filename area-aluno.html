@@ -264,6 +264,9 @@ async function screenLessons(){
   });
 
   renderApp(`
+    <div style="display:flex; justify-content:flex-end; margin-bottom:0.8rem;">
+      <a href="${WORKER_BASE_URL}/api/apostila?courseId=${encodeURIComponent(courseId)}" target="_blank" style="font-size:0.85rem;">📄 Baixar apostila em PDF</a>
+    </div>
     <div class="progress-bar"><div class="progress-bar-fill" style="width:${totalCount ? (doneCount/totalCount*100) : 0}%;"></div></div>
     <p style="font-size:0.85rem; color:var(--ink-soft); margin:-1rem 0 1.5rem;">${doneCount} de ${totalCount} aulas concluídas</p>
     <div class="layout">
