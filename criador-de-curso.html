@@ -107,7 +107,6 @@
 
 <script>
 const CHECKOUT_URL = 'https://invoice.infinitepay.io/plans/decastro247/VydK18LDsR';
-const USER_KEY = 'decastro_criador_curso_user_v1';
 const STORAGE_KEY = 'decastro_criador_curso_v2';
 const DEMO_MODULE_COUNT = 1;
 const DEMO_LESSONS_PER_MODULE = 2;
@@ -124,6 +123,7 @@ function blankState(){
   return {
     currentStep: 1,
     maxStepReached: 1,
+    courseId: null,
     course: { title:'', hours:'', level:'basico' },
     program: { accepted:false, attempts:0, modules:[] },
     modules: [],
@@ -152,25 +152,38 @@ function escapeHtml(str){
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-/* ---------- conta / assinatura ---------- */
-function loadUser(){ try{ return JSON.parse(localStorage.getItem(USER_KEY)); }catch(e){ return null; } }
-function saveUser(user){ localStorage.setItem(USER_KEY, JSON.stringify(user)); }
-function isAuthenticated(){ return !!loadUser(); }
-function isSubscriber(){ const u = loadUser(); return !!(u && u.subscriber); }
+/* ---------- conta / assinatura (via Worker real) ---------- */
+let currentUser = null; // { authenticated, name, email, subscriber } — vem do /api/me
+
+async function refreshUser(){
+  try{
+    currentUser = await fetchWorker('/api/me', { method:'GET' });
+  }catch(e){
+    currentUser = { authenticated:false };
+  }
+}
+function isAuthenticated(){ return !!(currentUser && currentUser.authenticated); }
+function isSubscriber(){ return !!(currentUser && currentUser.subscriber); }
 function hasFullAccess(){ return isSubscriber(); }
 
 function renderAccountBar(){
   const bar = document.getElementById('accountBar');
-  const user = loadUser();
-  if(user){
-    bar.innerHTML = `<span>Olá, ${escapeHtml(user.name)}${user.subscriber ? ' <strong style="color:var(--forest);">· assinante</strong>' : ''}</span>
-      <button id="toggleSubBtn">${user.subscriber ? 'Simular cancelamento' : 'Simular assinatura ativa'}</button>
+  if(isAuthenticated()){
+    bar.innerHTML = `<span>Olá, ${escapeHtml(currentUser.name)}${currentUser.subscriber ? ' <strong style="color:var(--forest);">· assinante</strong>' : ' · conta gratuita'}</span>
+      ${!currentUser.subscriber ? '<button id="wantSubBtn">Assinar</button>' : ''}
       <button id="logoutBtn">Sair</button>`;
-    document.getElementById('logoutBtn').onclick = ()=>{ localStorage.removeItem(USER_KEY); render(); };
-    document.getElementById('toggleSubBtn').onclick = ()=>{ user.subscriber = !user.subscriber; saveUser(user); render(); };
+    document.getElementById('logoutBtn').onclick = async ()=>{
+      await fetchWorker('/api/logout', { method:'POST', body:{} }).catch(()=>{});
+      await refreshUser();
+      render();
+    };
+    if(!currentUser.subscriber){
+      document.getElementById('wantSubBtn').onclick = ()=>openSubscribeModal('demo_scale');
+    }
   } else {
-    bar.innerHTML = `<button id="signupBtnTop">Criar conta</button>`;
+    bar.innerHTML = `<button id="loginBtnTop">Entrar</button> <button id="signupBtnTop">Criar conta</button>`;
     document.getElementById('signupBtnTop').onclick = openSignupModal;
+    document.getElementById('loginBtnTop').onclick = openLoginModal;
   }
 }
 
@@ -197,13 +210,13 @@ function openSubscribeModal(reason){
         <p>${msg.body}</p>
         <div class="modal-actions">
           <button class="btn btn-primary" id="goCheckout">Quero assinar</button>
-          <button class="btn btn-ghost" id="goSignup">Criar conta gratuita primeiro</button>
+          ${!isAuthenticated() ? '<button class="btn btn-ghost" id="goSignup">Criar conta gratuita primeiro</button>' : ''}
         </div>
         <button class="modal-close" id="closeSubscribe">Continuar no modo demonstração</button>
       </div>
     </div>`;
   document.getElementById('goCheckout').onclick = ()=>{ window.location.href = CHECKOUT_URL; };
-  document.getElementById('goSignup').onclick = openSignupModal;
+  if(!isAuthenticated()) document.getElementById('goSignup').onclick = openSignupModal;
   document.getElementById('closeSubscribe').onclick = closeModal;
 }
 
@@ -215,20 +228,69 @@ function openSignupModal(){
         <p>Sua conta guarda o curso que você já começou. A assinatura continua sendo necessária para gerar cursos completos (além do tamanho de demonstração).</p>
         <div class="field"><label for="su-name">Nome</label><input type="text" id="su-name"></div>
         <div class="field"><label for="su-email">E-mail</label><input type="text" id="su-email"></div>
-        <div class="field" style="margin-bottom:0;"><label for="su-pass">Senha</label><input type="text" id="su-pass"></div>
+        <div class="field" style="margin-bottom:0;"><label for="su-pass">Senha</label><input type="password" id="su-pass"></div>
+        <p class="error-text" id="signupError" style="display:none;"></p>
         <div class="modal-actions"><button class="btn btn-primary" id="doSignup">Criar conta e continuar</button></div>
+        <button class="modal-close" id="switchToLogin">Já tem conta? Entrar</button>
         <button class="modal-close" id="closeSignup">Cancelar</button>
       </div>
     </div>`;
-  document.getElementById('doSignup').onclick = ()=>{
+  document.getElementById('doSignup').onclick = async ()=>{
     const name = document.getElementById('su-name').value.trim();
     const email = document.getElementById('su-email').value.trim();
-    if(!name || !email) return;
-    saveUser({ name, email, subscriber:false, createdAt: new Date().toISOString() });
-    closeModal();
-    render();
+    const password = document.getElementById('su-pass').value;
+    if(!name || !email || !password) return;
+    const btn = document.getElementById('doSignup');
+    btn.disabled = true; btn.textContent = 'Criando conta...';
+    try{
+      await fetchWorker('/api/signup', { method:'POST', body:{ name, email, password } });
+      await refreshUser();
+      closeModal();
+      render();
+    }catch(err){
+      const errEl = document.getElementById('signupError');
+      errEl.style.display = 'block';
+      errEl.textContent = err.message;
+      btn.disabled = false; btn.textContent = 'Criar conta e continuar';
+    }
   };
+  document.getElementById('switchToLogin').onclick = openLoginModal;
   document.getElementById('closeSignup').onclick = closeModal;
+}
+
+function openLoginModal(){
+  document.getElementById('modalRoot').innerHTML = `
+    <div class="modal-overlay">
+      <div class="modal-box">
+        <h3>Entrar</h3>
+        <div class="field"><label for="li-email">E-mail</label><input type="text" id="li-email"></div>
+        <div class="field" style="margin-bottom:0;"><label for="li-pass">Senha</label><input type="password" id="li-pass"></div>
+        <p class="error-text" id="loginError" style="display:none;"></p>
+        <div class="modal-actions"><button class="btn btn-primary" id="doLogin">Entrar</button></div>
+        <button class="modal-close" id="switchToSignup">Ainda não tem conta? Criar conta</button>
+        <button class="modal-close" id="closeLogin">Cancelar</button>
+      </div>
+    </div>`;
+  document.getElementById('doLogin').onclick = async ()=>{
+    const email = document.getElementById('li-email').value.trim();
+    const password = document.getElementById('li-pass').value;
+    if(!email || !password) return;
+    const btn = document.getElementById('doLogin');
+    btn.disabled = true; btn.textContent = 'Entrando...';
+    try{
+      await fetchWorker('/api/login', { method:'POST', body:{ email, password } });
+      await refreshUser();
+      closeModal();
+      render();
+    }catch(err){
+      const errEl = document.getElementById('loginError');
+      errEl.style.display = 'block';
+      errEl.textContent = err.message;
+      btn.disabled = false; btn.textContent = 'Entrar';
+    }
+  };
+  document.getElementById('switchToSignup').onclick = openSignupModal;
+  document.getElementById('closeLogin').onclick = closeModal;
 }
 
 /* ---------- banners ---------- */
@@ -328,20 +390,39 @@ function showActionError(msg){
 }
 
 /* ---------- conexão com o Worker real ---------- */
-const WORKER_BASE_URL = ''; // defina aqui a URL do seu Worker publicado, ex: 'https://criador-curso.seudominio.workers.dev'
+const WORKER_BASE_URL = 'https://criador-curso-decastro.intelectus247.workers.dev';
 
-async function fetchWorker(path, body){
+async function fetchWorker(path, { method, body } = {}){
   if(!WORKER_BASE_URL){
     throw new Error('WORKER_BASE_URL não configurada');
   }
-  const res = await fetch(WORKER_BASE_URL + path, {
-    method: 'POST',
+  const opts = {
+    method: method || 'POST',
     credentials: 'include',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  if(!res.ok) throw new Error('resposta ' + res.status);
-  return await res.json();
+    headers: { 'content-type': 'application/json' }
+  };
+  if(body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch(WORKER_BASE_URL + path, opts);
+  const data = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(data.error || ('resposta ' + res.status));
+  return data;
+}
+
+/* ---------- sincronização do curso com o servidor ---------- */
+async function syncCourseToServer(){
+  try{
+    const result = await fetchWorker('/api/save-course', { method:'POST', body:{
+      courseId: state.courseId || null,
+      course: state.course,
+      modules: state.modules,
+      finalAssessment: state.finalAssessment,
+      certificate: state.certificate
+    }});
+    state.courseId = result.courseId;
+    saveState();
+  }catch(e){
+    // melhor-esforço — se o Worker estiver fora, o curso continua salvo localmente
+  }
 }
 /* ---------- Etapa 1: dados do curso ---------- */
 function renderStep1(){
@@ -392,9 +473,9 @@ function renderStep1(){
 async function generateProgramSuggestion(){
   const demo = !hasFullAccess();
   try{
-    const result = await fetchWorker('/api/suggest-program', {
+    const result = await fetchWorker('/api/suggest-program', { method:'POST', body:{
       title: state.course.title, hours: state.course.hours, level: state.course.level
-    });
+    }});
     const modulesWithIds = result.modules.map(m=>({
       id: uid(),
       title: m.title,
@@ -497,7 +578,7 @@ function renderStep2(){
 async function generateFullContent(){
   const demo = !hasFullAccess();
   try{
-    const result = await fetchWorker('/api/generate-course-content', {
+    const result = await fetchWorker('/api/generate-course-content', { method:'POST', body:{
       courseTitle: state.course.title,
       level: state.course.level,
       program: {
@@ -506,7 +587,7 @@ async function generateFullContent(){
           lessons: m.lessons.map(l=>({ title: l.title }))
         }))
       }
-    });
+    }});
     state.modules = result.modules.map((m, mi)=>({
       id: state.program.modules[mi].id,
       title: m.title,
@@ -617,7 +698,7 @@ function renderStep3(){
     findModule(e.target.dataset.mid).activity.instructions = e.target.value;
   }));
 
-  renderActions({ onNext: ()=>{ saveState(); return true; } });
+  renderActions({ loadingLabel:'Salvando...', onNext: async ()=>{ saveState(); await syncCourseToServer(); return true; } });
 }
 function findModule(mid){ return state.modules.find(x=>x.id===mid); }
 function findLessonV2(mid,lid){ return findModule(mid).lessons.find(x=>x.id===lid); }
@@ -674,11 +755,13 @@ function renderStep4(){
   document.getElementById('cert-text').addEventListener('input', e=>{ cert.text = e.target.value; });
   renderActions({
     nextLabel: 'Ir para revisão',
-    onNext: ()=>{
+    loadingLabel: 'Salvando...',
+    onNext: async ()=>{
       const wrap = document.getElementById('fa-title').closest('.field');
       if(!fa.title.trim()){ wrap.classList.add('invalid'); return false; }
       wrap.classList.remove('invalid');
       saveState();
+      await syncCourseToServer();
       return true;
     }
   });
@@ -719,7 +802,15 @@ function renderStep5(){
   const finishBtn = document.createElement('button');
   finishBtn.className = 'btn btn-primary';
   finishBtn.textContent = 'Marcar curso como concluído';
-  finishBtn.onclick = ()=>{ saveState(); alert('Curso salvo. A exportação para DOCX entra numa próxima etapa.'); };
+  finishBtn.onclick = async ()=>{
+    saveState();
+    finishBtn.disabled = true;
+    finishBtn.textContent = 'Salvando...';
+    await syncCourseToServer();
+    finishBtn.disabled = false;
+    finishBtn.textContent = 'Marcar curso como concluído';
+    alert('Curso salvo no servidor. A exportação para DOCX entra numa próxima etapa.');
+  };
   actionsRow.appendChild(finishBtn);
 }
 
@@ -733,7 +824,11 @@ function render(){
   const renderers = {1:renderStep1, 2:renderStep2, 3:renderStep3, 4:renderStep4, 5:renderStep5};
   renderers[state.currentStep]();
 }
-render();
+async function init(){
+  await refreshUser();
+  render();
+}
+init();
 </script>
 </body>
 </html>
