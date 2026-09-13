@@ -1,10 +1,12 @@
 /**
- * Worker do Criador de Cursos — geração via Anthropic + cadastro/login + persistência no D1.
+ * Worker do Criador de Cursos — geração via Anthropic + cadastro/login + persistência no D1 + apostila em PDF.
  *
  * Variáveis de ambiente esperadas:
  *  - ANTHROPIC_API_KEY (secret)
  *  - DB (binding D1)
  */
+
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 const MODEL_DEMO = 'claude-haiku-4-5-20251001';
 const MODEL_FULL = 'claude-sonnet-5';
@@ -365,6 +367,81 @@ async function issueCertificate(env, request, courseId) {
   };
 }
 
+/* ================= apostila em PDF ================= */
+
+async function generateApostilaPdf(env, request, courseId) {
+  const data = await loadCourse(env, request, courseId);
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  const pageWidth = 595.28, pageHeight = 841.89, margin = 56;
+  const maxWidth = pageWidth - margin * 2;
+
+  let page = pdfDoc.addPage([pageWidth, pageHeight]);
+  let y = pageHeight - margin;
+
+  function newPage() {
+    page = pdfDoc.addPage([pageWidth, pageHeight]);
+    y = pageHeight - margin;
+  }
+  function ensureSpace(h) {
+    if (y - h < margin) newPage();
+  }
+  function wrapText(text, useFont, size) {
+    const words = String(text || '').split(/\s+/);
+    const lines = [];
+    let current = '';
+    for (const word of words) {
+      const test = current ? current + ' ' + word : word;
+      if (useFont.widthOfTextAtSize(test, size) > maxWidth) {
+        if (current) lines.push(current);
+        current = word;
+      } else {
+        current = test;
+      }
+    }
+    if (current) lines.push(current);
+    return lines;
+  }
+  function drawParagraph(text, useFont, size, lineGap) {
+    const lines = wrapText(text, useFont, size);
+    for (const line of lines) {
+      ensureSpace(size + lineGap);
+      page.drawText(line, { x: margin, y, size, font: useFont, color: rgb(0.1, 0.15, 0.25) });
+      y -= size + lineGap;
+    }
+  }
+
+  drawParagraph(data.course.title || 'Curso', fontBold, 22, 10);
+  y -= 6;
+  drawParagraph(`Carga horária: ${data.course.hours || '-'}h · Nível: ${data.course.level || '-'}`, font, 12, 8);
+  y -= 26;
+
+  data.modules.forEach((m, mi) => {
+    ensureSpace(34);
+    drawParagraph(`Módulo ${mi + 1}: ${m.title}`, fontBold, 16, 8);
+    if (m.description) drawParagraph(m.description, font, 11, 6);
+    y -= 6;
+
+    m.lessons.forEach((l, li) => {
+      ensureSpace(22);
+      drawParagraph(`${li + 1}. ${l.title}`, fontBold, 13, 6);
+      drawParagraph(l.content || '', font, 11, 5);
+      y -= 8;
+    });
+
+    if (m.activity && m.activity.title) {
+      ensureSpace(22);
+      drawParagraph(`Atividade: ${m.activity.title}`, fontBold, 12, 5);
+      drawParagraph(m.activity.instructions || '', font, 11, 5);
+    }
+    y -= 22;
+  });
+
+  return await pdfDoc.save();
+}
+
 /* ================= roteamento ================= */
 
 export default {
@@ -466,6 +543,16 @@ export default {
         if (!courseId) throw new Error('Parâmetro courseId é obrigatório');
         const result = await issueCertificate(env, request, courseId);
         return jsonResponse(result, 200, headersOut, cors);
+      }
+
+      if (request.method === 'GET' && url.pathname === '/api/apostila') {
+        const courseId = url.searchParams.get('courseId');
+        if (!courseId) throw new Error('Parâmetro courseId é obrigatório');
+        const pdfBytes = await generateApostilaPdf(env, request, courseId);
+        const headers = new Headers(cors);
+        headers.set('content-type', 'application/pdf');
+        headers.set('content-disposition', 'inline; filename="apostila.pdf"');
+        return new Response(pdfBytes, { status: 200, headers });
       }
 
       return new Response('Not found', { status: 404 });
