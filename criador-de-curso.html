@@ -812,6 +812,14 @@ function renderStep5(){
     alert('Curso salvo no servidor. A exportação para DOCX entra numa próxima etapa.');
   };
   actionsRow.appendChild(finishBtn);
+
+  if(state.courseId){
+    const pdfBtn = document.createElement('button');
+    pdfBtn.className = 'btn btn-ghost';
+    pdfBtn.textContent = 'Baixar apostila em PDF';
+    pdfBtn.onclick = ()=>{ window.open(WORKER_BASE_URL + '/api/apostila?courseId=' + encodeURIComponent(state.courseId), '_blank'); };
+    actionsRow.appendChild(pdfBtn);
+  }
 }
 
 /* ---------- render principal ---------- */
