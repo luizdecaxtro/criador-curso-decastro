@@ -23,6 +23,7 @@
   header.top .brand span{color:var(--ochre-dark);}
   .account-bar{ display:flex; justify-content:flex-end; align-items:center; gap:0.75rem; font-size:0.82rem; color:var(--ink-soft); margin-bottom:1.5rem; }
   .account-bar button{ background:none; border:1px solid var(--line); color:var(--ink); padding:0.3rem 0.7rem; border-radius:3px; font-size:0.78rem; cursor:pointer; }
+  .account-bar .account-link{ background:none; border:1px solid var(--line); color:var(--ink); padding:0.3rem 0.7rem; border-radius:3px; font-size:0.78rem; cursor:pointer; text-decoration:none; display:inline-block; }
   h1.page-title{ font-family:'Fraunces', serif; font-weight:500; font-size:1.9rem; line-height:1.25; margin:0 0 0.5rem; }
   p.page-sub{ color:var(--ink-soft); font-size:1rem; margin:0 0 2rem; max-width:56ch; }
   .panel{ background:#fff; border:1px solid var(--line); border-radius:4px; padding:2rem; }
@@ -106,7 +107,7 @@ async function refreshUser(){
 function renderAccountBar(){
   const bar = document.getElementById('accountBar');
   if(currentUser && currentUser.authenticated){
-    bar.innerHTML = `<span>Olá, ${escapeHtml(currentUser.name)}</span> <button id="logoutBtn">Sair</button>`;
+    bar.innerHTML = `<span>Olá, ${escapeHtml(currentUser.name)}</span> <a class="account-link" href="criador-de-curso.html">⚙️ Admin</a> <button id="logoutBtn">Sair</button>`;
     document.getElementById('logoutBtn').onclick = async ()=>{
       await fetchWorker('/api/logout', { method:'POST', body:{} }).catch(()=>{});
       await refreshUser();
@@ -190,8 +191,31 @@ function openLoginModal(){
 function renderApp(html){ document.getElementById('app').innerHTML = html; }
 
 async function screenNoCourseId(){
-  renderApp(`<div class="panel"><h1 class="page-title" style="font-size:1.3rem;">Nenhum curso indicado</h1>
-    <p class="page-sub">Abra esta página a partir do link de um curso específico (ex: area-aluno.html?course=ID_DO_CURSO).</p></div>`);
+  renderApp(`<div class="panel"><h1 class="page-title" style="font-size:1.3rem;">Escolha um professor</h1>
+    <p class="page-sub">Carregando professores com cursos disponíveis...</p></div>`);
+  let professors = [];
+  try{
+    const result = await fetchWorker('/api/professors-directory');
+    professors = result.professors || [];
+  }catch(e){}
+
+  if(professors.length === 0){
+    renderApp(`<div class="panel"><h1 class="page-title" style="font-size:1.3rem;">Nenhum curso disponível ainda</h1>
+      <p class="page-sub">Assim que um professor publicar um curso, ele aparece aqui. Se alguém te passou o link direto de um curso, abra por esse link.</p></div>`);
+    return;
+  }
+
+  renderApp(`<div class="panel">
+    <h1 class="page-title" style="font-size:1.3rem;">Escolha um professor</h1>
+    <p class="page-sub">Veja os cursos disponíveis de cada um.</p>
+    <div style="display:flex; flex-direction:column; gap:0.7rem;">
+      ${professors.map(p => `
+        <a href="vitrine.html?p=${encodeURIComponent(p.public_slug)}" class="module-card" style="display:block; text-decoration:none; color:var(--ink);">
+          <strong>${escapeHtml(p.name)}</strong>
+        </a>
+      `).join('')}
+    </div>
+  </div>`);
 }
 
 async function screenNeedsLogin(){
@@ -208,25 +232,51 @@ async function screenNeedsLogin(){
   document.getElementById('goLogin').onclick = openLoginModal;
 }
 
+function formatBRL(cents){
+  return (cents/100).toLocaleString('pt-BR', { minimumFractionDigits:2, maximumFractionDigits:2 });
+}
+
 async function screenEnroll(){
+  renderApp(`<div class="panel"><p>Carregando informações do curso...</p></div>`);
+  let preview;
+  try{
+    preview = await fetchWorker('/api/course-preview?courseId=' + encodeURIComponent(courseId));
+  }catch(err){
+    renderApp(`<div class="panel"><p class="error-text">Não foi possível carregar este curso (${escapeHtml(err.message)}).</p></div>`);
+    return;
+  }
+  const isPaid = preview.priceCents > 0;
+
   renderApp(`
     <div class="panel">
-      <h1 class="page-title">Pronto para começar?</h1>
-      <p class="page-sub">Ao se inscrever, o curso passa a aparecer aqui com seu progresso salvo — você pode sair e voltar quando quiser.</p>
-      <button class="btn btn-primary" id="enrollBtn">Inscrever-se no curso</button>
+      <h1 class="page-title">${escapeHtml(preview.title)}</h1>
+      <p class="page-sub">${escapeHtml(preview.hours || '-')}h · ${escapeHtml(preview.level || '-')}</p>
+      ${isPaid
+        ? `<p style="font-size:1.3rem; font-weight:600; margin:0 0 1.2rem;">R$ ${formatBRL(preview.priceCents)}</p>
+           <p class="page-sub">Ao se inscrever, você será levado ao pagamento. Assim que confirmado, o curso libera automaticamente.</p>
+           <button class="btn btn-primary" id="enrollBtn">Pagar e se inscrever</button>`
+        : `<p class="page-sub">Este curso é gratuito. Ao se inscrever, ele passa a aparecer aqui com seu progresso salvo.</p>
+           <button class="btn btn-primary" id="enrollBtn">Inscrever-se no curso</button>`
+      }
       <p class="error-text" id="enrollErr" style="display:none;"></p>
     </div>`);
+
   document.getElementById('enrollBtn').onclick = async ()=>{
     const btn = document.getElementById('enrollBtn');
-    btn.disabled = true; btn.textContent = 'Inscrevendo...';
+    btn.disabled = true; btn.textContent = isPaid ? 'Gerando pagamento...' : 'Inscrevendo...';
     try{
-      await fetchWorker('/api/enroll', { method:'POST', body:{ courseId } });
-      await loadCourseData();
-      render();
+      if(isPaid){
+        const result = await fetchWorker('/api/enroll-checkout', { method:'POST', body:{ courseId } });
+        window.location.href = result.url;
+      } else {
+        await fetchWorker('/api/enroll', { method:'POST', body:{ courseId } });
+        await loadCourseData();
+        render();
+      }
     }catch(err){
       const el = document.getElementById('enrollErr');
       el.style.display='block'; el.textContent = err.message;
-      btn.disabled = false; btn.textContent = 'Inscrever-se no curso';
+      btn.disabled = false; btn.textContent = isPaid ? 'Pagar e se inscrever' : 'Inscrever-se no curso';
     }
   };
 }
@@ -384,13 +434,26 @@ async function render(){
   if(!currentUser.authenticated){ await screenNeedsLogin(); return; }
   if(!courseData){
     try{ await loadCourseData(); }
-    catch(e){ await screenEnroll(); return; }
+    catch(e){
+      if(e.message === 'PAGAMENTO_PENDENTE'){ await screenPaymentPending(); return; }
+      await screenEnroll();
+      return;
+    }
   }
 
   if(appScreen === 'assessment') await screenAssessment();
   else if(appScreen === 'result') await screenResult();
   else if(appScreen === 'certificate') await screenCertificate();
   else await screenLessons();
+}
+
+async function screenPaymentPending(){
+  renderApp(`<div class="panel">
+    <h1 class="page-title" style="font-size:1.3rem;">Aguardando confirmação do pagamento</h1>
+    <p class="page-sub">Assim que o pagamento for aprovado, o curso libera automaticamente aqui. Isso costuma ser rápido, mas pode levar alguns instantes.</p>
+    <button class="btn btn-primary" id="refreshBtn">Verificar novamente</button>
+  </div>`);
+  document.getElementById('refreshBtn').onclick = ()=>{ render(); };
 }
 
 async function init(){
