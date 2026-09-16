@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Preço da assinatura — Criador de Cursos</title>
+<style>
+  :root{
+    --navy:#1b2a44; --navy-soft:#2b3c58; --gold:#b98029; --gold-soft:#caa25a;
+    --parchment:#f3ecdc; --ink:#1c2230; --ink-soft:#5b6474;
+    --bg:#f6f4ee; --card:#ffffff; --line:#e6e0d2; --danger:#a4322b; --ok:#2f6d4f;
+    --shadow:0 10px 30px rgba(27,42,68,.12);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --parchment:#20293a; --bg:#141a26; --card:#1c2432; --line:#2c3547;
+      --ink:#e8ecf3; --ink-soft:#9aa5b7; --navy:#0f1826; --gold:#caa25a; --gold-soft:#b98029;
+      --shadow:0 10px 30px rgba(0,0,0,.45);
+    }
+  }
+  :root[data-theme="dark"]{
+    --parchment:#20293a; --bg:#141a26; --card:#1c2432; --line:#2c3547;
+    --ink:#e8ecf3; --ink-soft:#9aa5b7; --navy:#0f1826; --gold:#caa25a; --gold-soft:#b98029;
+    --shadow:0 10px 30px rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.5;padding:24px 16px;min-height:100vh}
+  .wrap{max-width:560px;margin:0 auto}
+  .brand{font-family:Georgia,"Times New Roman",serif;color:var(--ink-soft);
+    font-size:.9rem;letter-spacing:.02em;margin:0 0 14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    box-shadow:var(--shadow);overflow:hidden}
+  .card__head{background:var(--navy);padding:22px 24px 20px}
+  .card__head h1{font-family:Georgia,"Times New Roman",serif;color:#fff;
+    font-size:1.5rem;margin:0;font-weight:700}
+  .card__head .rule{width:64px;height:3px;background:var(--gold);border-radius:2px;margin-top:12px}
+  .card__head p{color:#d6ddea;margin:12px 0 0;font-size:.92rem}
+  .card__body{padding:22px 24px 26px}
+
+  .state{display:none}
+  .state.is-active{display:block}
+
+  .field{margin:0 0 18px}
+  .field label{display:block;font-weight:600;margin-bottom:6px;font-size:.95rem}
+  .field .hint{color:var(--ink-soft);font-size:.82rem;margin-top:5px}
+  .money{position:relative}
+  .money::before{content:"R$";position:absolute;left:13px;top:50%;transform:translateY(-50%);
+    color:var(--ink-soft);font-weight:600}
+  .money input{width:100%;padding:12px 14px 12px 40px;font-size:1.05rem;color:var(--ink);
+    background:transparent;border:1.5px solid var(--line);border-radius:10px}
+  .money input:focus{outline:none;border-color:var(--gold)}
+
+  .preview{background:var(--parchment);border-radius:10px;padding:14px 16px;margin:4px 0 20px;
+    font-family:Georgia,"Times New Roman",serif}
+  .preview .lbl{font-size:.78rem;color:var(--ink-soft);margin-bottom:4px}
+  .preview .val{font-size:1.15rem}
+  .preview .from{color:var(--ink-soft);text-decoration:line-through;margin-right:8px}
+  .preview .to{color:var(--gold);font-weight:700}
+
+  button.save{width:100%;background:var(--navy);color:#fff;border:0;border-radius:10px;
+    padding:14px;font-size:1rem;font-weight:600;cursor:pointer;transition:background .15s}
+  button.save:hover{background:var(--navy-soft)}
+  button.save:disabled{opacity:.6;cursor:default}
+
+  .msg{margin-top:16px;padding:12px 14px;border-radius:10px;font-size:.92rem;display:none}
+  .msg.is-active{display:block}
+  .msg.ok{background:color-mix(in srgb,var(--ok) 12%,transparent);color:var(--ok);
+    border:1px solid color-mix(in srgb,var(--ok) 30%,transparent)}
+  .msg.err{background:color-mix(in srgb,var(--danger) 12%,transparent);color:var(--danger);
+    border:1px solid color-mix(in srgb,var(--danger) 30%,transparent)}
+
+  .muted{color:var(--ink-soft);font-size:.9rem}
+  .center{text-align:center;padding:8px 0}
+  a{color:var(--gold);font-weight:600}
+  .spinner{width:22px;height:22px;border:3px solid var(--line);border-top-color:var(--gold);
+    border-radius:50%;animation:spin .8s linear infinite;margin:14px auto}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <p class="brand">DeCastro · Criador de Cursos</p>
+    <div class="card">
+      <div class="card__head">
+        <h1>Preço da assinatura</h1>
+        <div class="rule"></div>
+        <p>Ajuste o valor cheio e o promocional da assinatura. A alteração vale na hora, sem passar pela Cloudflare.</p>
+      </div>
+      <div class="card__body">
+
+        <!-- carregando -->
+        <div id="state-loading" class="state is-active">
+          <div class="spinner"></div>
+          <p class="center muted">Verificando seu acesso…</p>
+        </div>
+
+        <!-- sem acesso -->
+        <div id="state-denied" class="state">
+          <p>Não consegui confirmar seu acesso de administrador.</p>
+          <p class="muted">Entre na sua conta de administrador pelo app (no mesmo navegador) e recarregue esta página.
+            <span id="denied-detail"></span></p>
+          <p><a href="./criador-de-curso.html">Abrir o app para entrar</a></p>
+        </div>
+
+        <!-- formulário -->
+        <div id="state-form" class="state">
+          <div class="field">
+            <label for="full">Preço cheio</label>
+            <div class="money"><input id="full" inputmode="decimal" placeholder="180,00" autocomplete="off"></div>
+            <div class="hint">Valor de referência, mostrado riscado no convite.</div>
+          </div>
+
+          <div class="field">
+            <label for="promo">Preço promocional</label>
+            <div class="money"><input id="promo" inputmode="decimal" placeholder="54,00" autocomplete="off"></div>
+            <div class="hint">Valor efetivamente cobrado no checkout da InfinitePay.</div>
+          </div>
+
+          <div class="preview">
+            <div class="lbl">Como aparece para o professor</div>
+            <div class="val"><span class="from" id="pv-full">R$ —</span><span class="to" id="pv-promo">R$ —</span></div>
+          </div>
+
+          <button class="save" id="btn-save">Salvar preço</button>
+          <div class="msg" id="msg"></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+<script>
+  var WORKER = 'https://criador-curso-decastro.intelectus247.workers.dev';
+
+  var el = function(id){ return document.getElementById(id); };
+  function show(state){
+    ['state-loading','state-denied','state-form'].forEach(function(s){
+      el(s).classList.toggle('is-active', s === state);
+    });
+  }
+  function centsToReais(c){
+    return (Number(c)/100).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
+  }
+  // aceita "180", "180,00", "180.00", "1.800,00", "R$ 54,00"
+  function reaisToCents(str){
+    var s = String(str == null ? '' : str).replace(/[^\d.,]/g, '').trim();
+    if(!s) return NaN;
+    if(s.indexOf(',') > -1 && s.indexOf('.') > -1){ s = s.replace(/\./g, '').replace(',', '.'); }
+    else if(s.indexOf(',') > -1){ s = s.replace(',', '.'); }
+    var v = parseFloat(s);
+    if(!isFinite(v)) return NaN;
+    return Math.round(v * 100);
+  }
+  function msg(kind, text){
+    var m = el('msg');
+    m.textContent = text;
+    m.className = 'msg is-active ' + kind;
+  }
+  function clearMsg(){ el('msg').className = 'msg'; }
+
+  function updatePreview(){
+    var full = reaisToCents(el('full').value);
+    var promo = reaisToCents(el('promo').value);
+    el('pv-full').textContent = 'R$ ' + (isFinite(full) ? centsToReais(full) : '—');
+    el('pv-promo').textContent = 'R$ ' + (isFinite(promo) ? centsToReais(promo) : '—');
+  }
+
+  function fillForm(pricing){
+    if(pricing && isFinite(pricing.fullPriceCents)) el('full').value = centsToReais(pricing.fullPriceCents);
+    if(pricing && isFinite(pricing.priceCents)) el('promo').value = centsToReais(pricing.priceCents);
+    updatePreview();
+  }
+
+  async function carregar(){
+    try{
+      var res = await fetch(WORKER + '/api/admin/pricing', { credentials: 'include' });
+      var data = await res.json().catch(function(){ return {}; });
+      if(!res.ok || data.error){
+        el('denied-detail').textContent = data.error ? ('(' + data.error + ')') : '';
+        show('state-denied');
+        return;
+      }
+      fillForm(data);
+      show('state-form');
+    }catch(e){
+      el('denied-detail').textContent = '(' + e.message + ')';
+      show('state-denied');
+    }
+  }
+
+  async function salvar(){
+    clearMsg();
+    var fullCents = reaisToCents(el('full').value);
+    var promoCents = reaisToCents(el('promo').value);
+    if(!isFinite(fullCents) || fullCents <= 0){ msg('err', 'Informe um preço cheio válido.'); return; }
+    if(!isFinite(promoCents) || promoCents <= 0){ msg('err', 'Informe um preço promocional válido.'); return; }
+    if(promoCents > fullCents){ msg('err', 'O preço promocional não pode ser maior que o preço cheio.'); return; }
+
+    var btn = el('btn-save');
+    btn.disabled = true; btn.textContent = 'Salvando…';
+    try{
+      var res = await fetch(WORKER + '/api/admin/pricing', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priceCents: promoCents, fullPriceCents: fullCents })
+      });
+      var data = await res.json().catch(function(){ return {}; });
+      if(!res.ok || data.error){ msg('err', data.error || 'Não foi possível salvar. Tente novamente.'); return; }
+      fillForm(data);
+      msg('ok', 'Preço atualizado. O novo valor já vale para as próximas assinaturas.');
+    }catch(e){
+      msg('err', 'Falha de conexão: ' + e.message);
+    }finally{
+      btn.disabled = false; btn.textContent = 'Salvar preço';
+    }
+  }
+
+  el('full').addEventListener('input', function(){ clearMsg(); updatePreview(); });
+  el('promo').addEventListener('input', function(){ clearMsg(); updatePreview(); });
+  el('btn-save').addEventListener('click', salvar);
+  carregar();
+</script>
+</body>
+</html>
