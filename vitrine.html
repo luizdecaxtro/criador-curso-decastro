@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cursos | DeCastro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#1B2A44; --ink-soft:#3D4E6B;
+    --parchment:#F3ECDD; --parchment-2:#EAE1CC;
+    --ochre:#B98029; --ochre-dark:#8A5E1B;
+    --forest:#3F5D4F; --forest-light:#EDF1EC;
+    --line:#D8CFB8;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--parchment); color:var(--ink); font-family:'Source Sans 3', sans-serif; -webkit-font-smoothing:antialiased; }
+  .shell{ max-width:760px; margin:0 auto; padding:3rem 1.5rem 5rem; }
+  .brand{ font-family:'Fraunces', serif; font-weight:600; font-size:1rem; color:var(--ink-soft); margin-bottom:0.5rem; }
+  h1.page-title{ font-family:'Fraunces', serif; font-weight:600; font-size:2rem; margin:0 0 2.2rem; }
+  .course-card{ background:#fff; border:1px solid var(--line); border-radius:4px; padding:1.5rem 1.7rem; margin-bottom:1rem; display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; }
+  .course-card h3{ font-family:'Fraunces', serif; font-weight:600; font-size:1.2rem; margin:0 0 0.3rem; }
+  .course-card p{ margin:0; color:var(--ink-soft); font-size:0.9rem; }
+  .price{ font-size:1.15rem; font-weight:600; color:var(--ochre-dark); white-space:nowrap; }
+  .btn{ font-family:'Source Sans 3', sans-serif; font-size:0.9rem; font-weight:600; padding:0.6rem 1.1rem; border-radius:3px; cursor:pointer; border:1px solid var(--ink); background:var(--ink); color:#fff; text-decoration:none; display:inline-block; white-space:nowrap; }
+  .empty{ color:var(--ink-soft); }
+  .btn-ghost{ background:transparent; color:var(--ink); }
+  .back-link{ display:inline-block; margin-bottom:1.2rem; color:var(--ink-soft); text-decoration:none; font-weight:600; font-size:0.9rem; }
+  .back-link:hover{ color:var(--ink); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <a class="back-link" href="#" onclick="goBack();return false;">← Voltar</a>
+  <div class="brand">DeCastro | Criador de Cursos</div>
+  <h1 class="page-title" id="pageTitle">Carregando...</h1>
+  <div id="list"></div>
+</div>
+
+<script>
+const WORKER_BASE_URL = 'https://criador-curso-decastro.intelectus247.workers.dev';
+function goBack(){ if(window.history.length > 1){ window.history.back(); } else { window.location.href = 'portal.html'; } }
+function escapeHtml(str){
+  if(!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function formatBRL(cents){
+  return (cents/100).toLocaleString('pt-BR', { minimumFractionDigits:2, maximumFractionDigits:2 });
+}
+async function fetchWorker(path){
+  const res = await fetch(WORKER_BASE_URL + path, { credentials:'include' });
+  const data = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(data.error || ('resposta ' + res.status));
+  return data;
+}
+
+async function init(){
+  const params = new URLSearchParams(window.location.search);
+  const slug = params.get('p');
+  if(!slug){
+    document.getElementById('pageTitle').textContent = 'Nenhum professor indicado';
+    document.getElementById('list').innerHTML = '<p class="empty">Abra esta página a partir do link de um professor específico (ex: vitrine.html?p=apelido).</p>';
+    return;
+  }
+  try{
+    const data = await fetchWorker('/api/professor-showcase?p=' + encodeURIComponent(slug));
+    document.getElementById('pageTitle').textContent = `Cursos de ${data.name}`;
+    if(!data.courses || data.courses.length === 0){
+      document.getElementById('list').innerHTML = '<p class="empty">Nenhum curso publicado no momento.</p>';
+      return;
+    }
+    document.getElementById('list').innerHTML = data.courses.map(c => `
+      <div class="course-card">
+        <div>
+          <h3>${escapeHtml(c.title)}</h3>
+          <p>${escapeHtml(c.hours || '-')}h · ${escapeHtml(c.level || '-')}</p>
+        </div>
+        <div style="text-align:right;">
+          <div class="price">${c.price_cents > 0 ? 'R$ ' + formatBRL(c.price_cents) : 'Gratuito'}</div>
+          <div style="margin-top:0.5rem; display:flex; gap:0.5rem; justify-content:flex-end; flex-wrap:wrap;">
+            <a class="btn" href="area-aluno.html?course=${c.id}">Inscrever-se</a>
+            <a class="btn btn-ghost" href="area-aluno.html?course=${c.id}">Já sou inscrito</a>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  }catch(err){
+    document.getElementById('pageTitle').textContent = 'Professor não encontrado';
+    document.getElementById('list').innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
+  }
+}
+init();
+</script>
+</body>
+</html>
