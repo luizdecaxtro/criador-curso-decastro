@@ -92,21 +92,24 @@ async function generateCourseContent(env, input, isSubscriber) {
   const model = isSubscriber ? MODEL_FULL : MODEL_DEMO;
   // gera cada módulo com 1 nova tentativa em caso de falha (cobre picos de chamadas simultâneas / erros transitórios)
   async function moduleWithRetry(m) {
+    let lastErr = '';
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         return await generateModuleContent(env, { courseTitle: input.courseTitle, level: input.level, module: m, model });
       } catch (e) {
+        lastErr = (e && e.message) ? e.message : String(e);
         if (attempt === 0) await new Promise(r => setTimeout(r, 1000 + Math.floor(Math.random() * 1500)));
       }
     }
-    return null; // falhou nas duas tentativas — o módulo fica vazio, sem derrubar os demais
+    return { _error: lastErr }; // falhou nas duas tentativas — carrega o erro real para diagnóstico
   }
   const results = await Promise.all(input.program.modules.map(m => moduleWithRetry(m)));
   return input.program.modules.map((m, i) => {
     const r = results[i];
+    const failed = r && r._error;
     return {
       title: m.title,
-      description: r ? r.description : '',
+      description: failed ? ('[DIAGNÓSTICO — falha na geração deste módulo: ' + r._error + ']') : (r ? r.description : ''),
       lessons: m.lessons.map((l, j) => ({
         title: l.title,
         content: (r && r.lessons && r.lessons[j]) ? r.lessons[j].content : '',
