@@ -101,14 +101,8 @@ async function generateCourseContent(env, input, isSubscriber) {
     }
     return null; // falhou nas duas tentativas — o módulo fica vazio, sem derrubar os demais
   }
-  // gera em pequenos lotes (em vez de todos de uma vez) para não estourar o limite de taxa da API
-  const modules = input.program.modules;
-  const results = [];
-  for (let i = 0; i < modules.length; i += 3) {
-    const batch = modules.slice(i, i + 3).map(m => moduleWithRetry(m));
-    results.push(...await Promise.all(batch));
-  }
-  return modules.map((m, i) => {
+  const results = await Promise.all(input.program.modules.map(m => moduleWithRetry(m)));
+  return input.program.modules.map((m, i) => {
     const r = results[i];
     return {
       title: m.title,
